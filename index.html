@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sloth Notes: paste it, get the gist</title>
+<meta name="description" content="Paste a lecture transcript or group chat and get a summary, action items or flashcards. Runs an open-weight model entirely in your browser. No server, no API key.">
+<style>
+:root{
+  --bg:#e4eadc; --panel:#f3f6ee; --ink:#2b2822; --muted:#5d6652; --moss:#4c6b2f; --moss-d:#38511f; --line:#b9c4aa; --warn:#8a3b1f;
+}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#1f261a; --panel:#283121; --ink:#e8eddf; --muted:#a3b094; --moss:#9dc070; --moss-d:#b7d68e; --line:#3d4a33; --warn:#e8a07f;}
+}
+*{box-sizing:border-box}
+html{background:var(--bg)}
+body{margin:0;color:var(--ink);font:17px/1.6 Georgia,"Times New Roman",serif;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+main{max-width:760px;margin:0 auto;padding:40px 20px 64px}
+h1{font-size:clamp(2.2rem,7vw,3.4rem);line-height:1.05;margin:0 0 .4em;font-weight:700;letter-spacing:-.02em}
+.lede{color:var(--muted);max-width:56ch;margin:0 0 2rem}
+section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:20px;margin-bottom:18px}
+h2{font-size:1.05rem;margin:0 0 .6rem}
+label{display:block;font-size:.9rem;color:var(--muted);margin-bottom:6px}
+select,textarea,button{font:inherit;color:inherit}
+select,textarea{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:10px}
+textarea{min-height:200px;resize:vertical;font:15px/1.5 ui-monospace,Menlo,Consolas,monospace}
+button{cursor:pointer;border:1px solid var(--moss);background:var(--moss);color:#fff;border-radius:6px;padding:10px 16px}
+@media (prefers-color-scheme:dark){button{color:#1b2315}}
+button.alt{background:transparent;color:var(--moss-d)}
+button:disabled{opacity:.5;cursor:not-allowed}
+:focus-visible{outline:3px solid var(--moss-d);outline-offset:2px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:end}
+.row>div{flex:1 1 240px}
+.modes{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 0}
+.modes button[aria-pressed="true"]{background:var(--moss);color:#fff}
+@media (prefers-color-scheme:dark){.modes button[aria-pressed="true"]{color:#1b2315}}
+progress{width:100%;height:10px;margin-top:12px;accent-color:var(--moss)}
+.status{font-size:.9rem;color:var(--muted);margin:10px 0 0;min-height:1.4em}
+.status.err{color:var(--warn)}
+#out{white-space:pre-wrap;min-height:5rem}
+.pill{display:inline-block;font-size:.85rem;border:1px solid var(--line);border-radius:99px;padding:2px 12px;color:var(--muted)}
+footer{font-size:.9rem;color:var(--muted)}
+footer a{color:var(--moss-d)}
+.nogpu{display:none;border-color:var(--warn)}
+</style>
+</head>
+<body>
+<main>
+  <h1>Sloth Notes</h1>
+  <p class="lede">Paste a lecture transcript or a long group chat. Get the gist and go back to resting. An open-weight model runs inside this page, so your text never leaves your device.</p>
+
+  <section class="nogpu" id="nogpu">
+    <strong>WebGPU isn't available in this browser.</strong> Open this page in recent Chrome or Edge on a laptop or desktop.
+  </section>
+
+  <section>
+    <h2>1. Pick a model</h2>
+    <div class="row">
+      <div>
+        <label for="model">Open-weight model (downloaded once, then cached)</label>
+        <select id="model">
+          <option value="Qwen2.5-0.5B-Instruct-q4f16_1-MLC">Qwen2.5 0.5B: smallest, fastest</option>
+          <option value="Llama-3.2-1B-Instruct-q4f16_1-MLC">Llama 3.2 1B: balanced</option>
+          <option value="Qwen2.5-1.5B-Instruct-q4f16_1-MLC" selected>Qwen2.5 1.5B: better summaries</option>
+          <option value="gemma-2-2b-it-q4f16_1-MLC">Gemma 2 2B: best quality, slowest</option>
+        </select>
+      </div>
+      <button id="load">Load model</button>
+    </div>
+    <progress id="bar" max="1" value="0" hidden></progress>
+    <p class="status" id="status" role="status">No model loaded yet.</p>
+    <span class="pill" id="net">checking connection…</span>
+  </section>
+
+  <section>
+    <h2>2. Paste your text</h2>
+    <label for="inp">Lecture transcript, chat export, article, anything long</label>
+    <textarea id="inp" placeholder="Paste here…"></textarea>
+    <div class="modes" role="group" aria-label="Output type">
+      <button class="alt" data-mode="summary" aria-pressed="true">Two-line summary</button>
+      <button class="alt" data-mode="actions" aria-pressed="false">Action items and deadlines</button>
+      <button class="alt" data-mode="cards" aria-pressed="false">Flashcards</button>
+    </div>
+    <div class="row" style="margin-top:14px">
+      <button id="go" disabled>Do the work for me</button>
+      <button id="stop" class="alt" disabled>Stop</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>3. The gist</h2>
+    <div id="out" aria-live="polite">Your result appears here.</div>
+    <div class="row" style="margin-top:12px"><button class="alt" id="copy">Copy result</button></div>
+  </section>
+
+  <footer>
+    <p>Built for the DEV Hacktoberfest Open-Source AI Challenge, week 3: Slow and Steady. Uses <a href="https://github.com/mlc-ai/web-llm">WebLLM</a> (open source) to run open-weight models through WebGPU. After the first download, the model is cached by your browser and works with Wi-Fi off. Small models can miss details, so check anything important against the original text.</p>
+  </footer>
+</main>
+
+<script type="module">
+import * as webllm from "https://esm.run/@mlc-ai/web-llm";
+
+const $ = id => document.getElementById(id);
+const PROMPTS = {
+  summary: "Summarise the text in exactly two short sentences. Plain language, no preamble.",
+  actions: "List every task, deadline, date and person responsible found in the text as a short bulleted list. If there are none, say 'No action items found.' No preamble.",
+  cards: "Write 6 study flashcards from the text. Format each exactly as:\nQ: question\nA: answer\nLeave a blank line between cards. No preamble."
+};
+let engine = null, mode = "summary", busy = false;
+
+if (!navigator.gpu) $("nogpu").style.display = "block";
+
+const net = () => { $("net").textContent = navigator.onLine ? "online" : "offline: still works if the model is cached"; };
+addEventListener("online", net); addEventListener("offline", net); net();
+
+const setStatus = (t, err) => { $("status").textContent = t; $("status").className = "status" + (err ? " err" : ""); };
+
+document.querySelectorAll(".modes button").forEach(b => b.onclick = () => {
+  mode = b.dataset.mode;
+  document.querySelectorAll(".modes button").forEach(x => x.setAttribute("aria-pressed", x === b));
+});
+
+$("load").onclick = async () => {
+  if (!navigator.gpu) return setStatus("WebGPU is required. Try Chrome or Edge.", true);
+  $("load").disabled = true; $("go").disabled = true; $("bar").hidden = false; $("bar").value = 0;
+  try {
+    if (engine) { await engine.unload(); engine = null; }
+    engine = await webllm.CreateMLCEngine($("model").value, {
+      initProgressCallback: p => { $("bar").value = p.progress || 0; setStatus(p.text); }
+    });
+    setStatus("Model ready. It runs on your device.");
+    $("go").disabled = false;
+  } catch (e) {
+    setStatus("Could not load the model: " + e.message, true);
+  }
+  $("bar").hidden = true; $("load").disabled = false;
+};
+
+$("go").onclick = async () => {
+  const text = $("inp").value.trim();
+  if (!engine) return setStatus("Load a model first.", true);
+  if (!text) return setStatus("Paste some text first.", true);
+  busy = true; $("go").disabled = true; $("stop").disabled = false; $("out").textContent = "";
+  try {
+    const stream = await engine.chat.completions.create({
+      stream: true, temperature: 0.3, max_tokens: 600,
+      messages: [
+        { role: "system", content: "You are a careful assistant. Use only the text provided. " + PROMPTS[mode] },
+        { role: "user", content: text.slice(0, 12000) }
+      ]
+    });
+    for await (const chunk of stream) {
+      $("out").textContent += chunk.choices[0]?.delta?.content || "";
+    }
+    setStatus("Done.");
+  } catch (e) {
+    setStatus("Stopped: " + e.message, true);
+  }
+  busy = false; $("go").disabled = false; $("stop").disabled = true;
+};
+
+$("stop").onclick = () => { if (engine && busy) engine.interruptGenerate(); };
+
+$("copy").onclick = async () => {
+  try { await navigator.clipboard.writeText($("out").textContent); setStatus("Copied."); }
+  catch { setStatus("Copy failed. Select the text and copy it manually.", true); }
+};
+</script>
+</body>
+</html>
